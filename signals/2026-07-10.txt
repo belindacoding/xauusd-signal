@@ -1,0 +1,10 @@
+===== XAUUSD DAILY SIGNAL | session close 2026-07-10 17:00 ET (generated 2026-07-10 05:43 ET) =====
+close=4112.73  past-5d=-1.49%  regime=GRIND
+
+>>> GRIND MOMENTUM (primary): FLAT
+    position for next session: no position  (capital=100,000, L=1.5, 1 lot=100oz)
+
+>>> GC-COMPOSITE v1 (reference): pos=+0  [TOM=0 Dip=0(raw 1, rate-gate rising=OFF) Big=+0]
+
+>>> SHADOW SHORT (纸面追踪，勿交易): SHORT  [below 60dMA=True, 5d-down=True]
+
