@@ -105,6 +105,12 @@ def main():
     mom5 = float(d["close"].iloc[-1] / d["close"].iloc[-6] - 1)
     ma60 = d["close"].rolling(60).mean()
     shadow_short = bool(d["close"].iloc[-2] < ma60.iloc[-2]) and (mom5 < 0)
+    # shadow 2: US-session short in post-peak bear. n=1 hypothesis from the 2026
+    # episode (US-day -9.6bps/d); would have LOST in 2018/20/21-type bears.
+    # Zero historical cross-validation -- forward paper tracking only.
+    dd252 = float(d["close"].iloc[-1] / d["close"].rolling(252).max().iloc[-1] - 1)
+    us_bear = (dd252 < -0.10) and bool(d["close"].iloc[-1] < ma60.iloc[-1]) \
+              and bool(ma60.iloc[-1] < ma60.iloc[-6])
 
     idx = d.index
     mon = pd.Series(idx.tz_localize(None).to_period("M"), index=idx)
@@ -143,6 +149,9 @@ def main():
     print()
     print(f">>> SHADOW SHORT (纸面追踪，勿交易): {'SHORT' if shadow_short else 'inactive'}"
           f"  [below 60dMA={bool(d['close'].iloc[-2] < ma60.iloc[-2])}, 5d-down={mom5 < 0}]")
+    print(f">>> SHADOW US-SHORT (纸面追踪，勿交易): "
+          f"{'ACTIVE — 明日 08:00→16:59 ET 做空（去杠杆熊假说，n=1，历史上洗盘熊会亏）' if us_bear else 'inactive'}"
+          f"  [dd252={dd252:+.1%}, bear-regime={us_bear}]")
 
 
 if __name__ == "__main__":
