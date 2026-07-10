@@ -1,7 +1,8 @@
 name: XAUUSD Daily Signal
 on:
   schedule:
-    - cron: '17 22 * * 1-5'   # ~18:17 ET summer / 17:17 ET winter (after NY close)
+    - cron: '7 21 * * 1-5'    # 17:07 ET in summer (EDT); pre-close in winter -> script self-gates
+    - cron: '7 22 * * 1-5'    # 17:07 ET in winter (EST); 18:07 in summer -> deduped if already posted
   workflow_dispatch:
 
 permissions:
@@ -28,8 +29,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          grep -q SESSION_INCOMPLETE_SKIP signal.txt && { echo "session not closed yet, skipping"; exit 0; }
           MAIN=$(grep -oP '(?<=GRIND MOMENTUM \(primary\): )\w+' signal.txt || echo UNKNOWN)
           DATE=$(grep -oP '(?<=session close )\S+' signal.txt || date -u +%F)
+          [ -f "signals/${DATE}.txt" ] && { echo "already posted for ${DATE}, skipping"; exit 0; }
           mkdir -p signals && cp signal.txt "signals/${DATE}.txt"
           git config user.name signal-bot
           git config user.email signal-bot@users.noreply.github.com

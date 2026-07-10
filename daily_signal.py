@@ -80,36 +80,40 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capital", type=float, default=100_000)
     ap.add_argument("--lev", type=float, default=1.5)
+    ap.add_argument("--force", action="store_true", help="bypass session-completeness gate")
     args = ap.parse_args()
     token = os.environ.get("EODHD_API_TOKEN") or sys.exit("set EODHD_API_TOKEN")
 
     d = daily_bars(fetch_1m(token))
     last = d.index[-1]
     now_et = pd.Timestamp.now(tz="America/New_York")
+    if not args.force and (last.date() != now_et.date() or now_et.hour < 17):
+        print("SESSION_INCOMPLETE_SKIP: latest complete session "
+              f"{last.date()}, now {now_et:%H:%M} ET — today's session not closed yet")
+        return
     ret = d["close"].pct_change() * 1e4
 
-    # --- regime (lagged one day: use bars up to yesterday for classification) ---
+    # frozen Grind spec (series form): all state lagged one session
     vol60 = ret.rolling(60).std()
-    vol_pct = vol60.rolling(756, min_periods=252).rank(pct=True)
-    in_hvb = bool((vol_pct.iloc[-2] > 0.6) and
-                  (d["close"].iloc[-2] > d["close"].rolling(60).mean().iloc[-2]))
+    vol_pct = vol60.rolling(756, min_periods=252).rank(pct=True).shift(1)
+    above = (d["close"] > d["close"].rolling(60).mean()).shift(1)
+    hvb = (vol_pct > 0.6) & above.fillna(False)
+    mom5s = d["close"].pct_change(5) > 0
+    sig = (mom5s & ~hvb).astype(int)
+    grind, grind_prev = bool(sig.iloc[-1]), bool(sig.iloc[-2])
+    in_hvb = bool(hvb.iloc[-1])
     mom5 = float(d["close"].iloc[-1] / d["close"].iloc[-6] - 1)
-    grind = (not in_hvb) and (mom5 > 0)
-    # shadow short (paper-tracked only, spec matches the 2026-07 study: lagged MA)
     ma60 = d["close"].rolling(60).mean()
     shadow_short = bool(d["close"].iloc[-2] < ma60.iloc[-2]) and (mom5 < 0)
 
-    # --- v1 reference signals ---
     idx = d.index
     mon = pd.Series(idx.tz_localize(None).to_period("M"), index=idx)
     tom_rank = mon.groupby(mon).cumcount()
-    # is the NEXT session among first 3 trading days? approx: if today is last
-    # bday of month -> next is rank0; else next rank = today's rank+1
     next_is_tom = (tom_rank.iloc[-1] + 1 < 3) or (idx[-1].month != (idx[-1] + pd.tseries.offsets.BDay(1)).month)
     dip_raw = bool(((d["close"] <= d["low"].rolling(20).min().shift())
                     .rolling(20, min_periods=1).max()).iloc[-1])
     rr_falling = real_rate_falling()
-    dip = dip_raw and (rr_falling is not False)   # v1.1 gate; None -> keep on
+    dip = dip_raw and (rr_falling is not False)
     thr = ret.abs().rolling(252, min_periods=100).quantile(0.9)
     big = int(np.sign(ret.iloc[-1])) if abs(ret.iloc[-1]) > thr.iloc[-1] else 0
     v1_pos = int(np.clip(int(next_is_tom) + int(dip) + big, -1, 2))
@@ -117,22 +121,28 @@ def main():
     px = float(d["close"].iloc[-1])
     lots = round(args.lev * args.capital / (px * 100), 2)
 
+    # execution guidance (F1 study 2026-07-10: entries earlier=better, exits later=better)
+    if grind and not grind_prev:
+        action = f"BUY {lots} lots 市价，越早越好：18:00 ET 重开即买（拖到次日平均多付 ~18bps）"
+    elif grind_prev and not grind:
+        action = "SELL 全部持仓：等到 20:00 ET 市价卖出（或挂限价 昨收+10bps 至 20:00，未成交则 20:00 市价）——晚卖平均多赚 ~4bps"
+    elif grind:
+        action = "无操作（维持多头）"
+    else:
+        action = "无操作（维持空仓）"
+
     print(f"===== XAUUSD DAILY SIGNAL | session close {last.date()} 17:00 ET "
           f"(generated {now_et:%Y-%m-%d %H:%M ET}) =====")
     print(f"close={px:.2f}  past-5d={mom5*100:+.2f}%  regime={'HVB(blow-off)' if in_hvb else 'GRIND'}")
     print()
-    print(f">>> GRIND MOMENTUM (primary): {'LONG' if grind else 'FLAT'}")
-    print(f"    position for next session: {'LONG ' + str(round(lots,2)) + ' lots' if grind else 'no position'}"
-          f"  (capital={args.capital:,.0f}, L={args.lev}, 1 lot=100oz)")
+    print(f">>> GRIND MOMENTUM (primary): {'LONG' if grind else 'FLAT'}  (yesterday: {'LONG' if grind_prev else 'FLAT'})")
+    print(f">>> ACTION: {action}")
     print()
     print(f">>> GC-COMPOSITE v1 (reference): pos={v1_pos:+d}  "
-          f"[TOM={int(next_is_tom)} Dip={int(dip)}{'(raw ' + str(int(dip_raw)) + ', rate-gate ' + ('falling=on' if rr_falling else 'rising=OFF' if rr_falling is False else 'n/a') + ')'} Big={big:+d}]")
+          f"[TOM={int(next_is_tom)} Dip={int(dip)} Big={big:+d}]")
     print()
     print(f">>> SHADOW SHORT (纸面追踪，勿交易): {'SHORT' if shadow_short else 'inactive'}"
           f"  [below 60dMA={bool(d['close'].iloc[-2] < ma60.iloc[-2])}, 5d-down={mom5 < 0}]")
-    print()
-    if last.date() < now_et.date() and now_et.hour >= 18:
-        print("!! WARNING: latest complete session is stale — check data feed")
 
 
 if __name__ == "__main__":
