@@ -1,0 +1,49 @@
+name: XAUUSD Daily Signal
+on:
+  schedule:
+    - cron: '17 22 * * 1-5'   # ~18:17 ET summer / 17:17 ET winter (after NY close)
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: write
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -q pandas numpy requests
+      - name: compute signal
+        env:
+          EODHD_API_TOKEN: ${{ secrets.EODHD_API_TOKEN }}
+        run: |
+          set -o pipefail
+          python daily_signal.py --capital 100000 --lev 1.5 | tee signal.txt
+      - name: log and notify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MAIN=$(grep -oP '(?<=GRIND MOMENTUM \(primary\): )\w+' signal.txt || echo UNKNOWN)
+          DATE=$(grep -oP '(?<=session close )\S+' signal.txt || date -u +%F)
+          cp signal.txt "signals/${DATE}.txt"
+          git config user.name signal-bot
+          git config user.email signal-bot@users.noreply.github.com
+          git add signals && (git commit -m "signal ${DATE}: ${MAIN}" && git push) || true
+          gh issue create \
+            --title "XAUUSD 信号 ${DATE}: ${MAIN}" \
+            --body "$(cat signal.txt)" \
+            --assignee "${{ github.repository_owner }}"
+      - name: notify failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "XAUUSD 信号 $(date -u +%F): UNAVAILABLE ⚠️" \
+            --body "信号生成失败——保持昨日仓位不变。详见 Actions 日志。" \
+            --assignee "${{ github.repository_owner }}"
