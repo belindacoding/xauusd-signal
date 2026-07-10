@@ -76,6 +76,41 @@ def real_rate_falling() -> bool | None:
         return None
 
 
+
+def roundbreak_shadow(m1, anchor="2026-07-10"):
+    """RoundBreak v1 frozen spec: $50-level touch after fresh 30m approach ->
+    enter next 1m open in break direction, hold 60m, exit market. Net = signed
+    fwd - (0.4 USD RT / price *1e4 + 0.3 comm). Returns (yesterday_trades,
+    yesterday_net_bps, cum_trades, cum_net_bps) computed since anchor."""
+    import numpy as np
+    m = m1[m1.index >= pd.Timestamp(anchor, tz="UTC")]
+    if len(m) < 200: return 0, 0.0, 0, 0.0
+    o, h, l, c = m["open"].values, m["high"].values, m["low"].values, m["close"].values
+    ts = m.index
+    n = len(m)
+    sess = (ts.tz_convert("America/New_York") + pd.Timedelta(hours=7)).date
+    last_sess = sess[-1]
+    trades = []
+    i = 65
+    while i < n - 65:
+        lu = np.ceil(c[i-1] / 50) * 50
+        ld = np.floor(c[i-1] / 50) * 50
+        hit = 0
+        if h[i] >= lu and c[i-31] < lu * (1 - 8e-4): hit = 1
+        elif l[i] <= ld and c[i-31] > ld * (1 + 8e-4): hit = -1
+        if hit:
+            entry = o[i+1]
+            net = hit * (c[min(i+61, n-1)] / entry - 1) * 1e4 - (0.4/entry*1e4 + 0.3)
+            trades.append((sess[i], net))
+            i += 61
+            continue
+        i += 1
+    if not trades: return 0, 0.0, 0, 0.0
+    ydays = [x for x in trades if x[0] == last_sess]
+    return (len(ydays), sum(x[1] for x in ydays),
+            len(trades), sum(x[1] for x in trades))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capital", type=float, default=100_000)
@@ -84,7 +119,8 @@ def main():
     args = ap.parse_args()
     token = os.environ.get("EODHD_API_TOKEN") or sys.exit("set EODHD_API_TOKEN")
 
-    d = daily_bars(fetch_1m(token))
+    m1_raw = fetch_1m(token)
+    d = daily_bars(m1_raw)
     last = d.index[-1]
     now_et = pd.Timestamp.now(tz="America/New_York")
     if not args.force and (last.date() != now_et.date() or now_et.hour < 17):
@@ -149,6 +185,9 @@ def main():
     print()
     print(f">>> SHADOW SHORT (纸面追踪，勿交易): {'SHORT' if shadow_short else 'inactive'}"
           f"  [below 60dMA={bool(d['close'].iloc[-2] < ma60.iloc[-2])}, 5d-down={mom5 < 0}]")
+    rb_n, rb_pnl, rb_cn, rb_cum = roundbreak_shadow(m1_raw)
+    print(f">>> SHADOW ROUNDBREAK (纸面追踪，勿交易): 昨日 {rb_n} 笔 {rb_pnl:+.1f}bps | "
+          f"自 2026-07-10 累计 {rb_cn} 笔 {rb_cum:+.0f}bps")
     print(f">>> SHADOW US-SHORT (纸面追踪，勿交易): "
           f"{'ACTIVE — 明日 08:00→16:59 ET 做空（去杠杆熊假说，n=1，历史上洗盘熊会亏）' if us_bear else 'inactive'}"
           f"  [dd252={dd252:+.1%}, bear-regime={us_bear}]")
