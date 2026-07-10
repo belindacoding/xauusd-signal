@@ -101,22 +101,26 @@ def roundbreak_shadow(m1, anchor="2026-07-10"):
         if hit:
             entry = o[i+1]
             cost = 0.4/entry*1e4 + 0.3
-            exit_i = min(i+61, n-1)
-            net = hit * (c[exit_i] / entry - 1) * 1e4 - cost
-            net_s = net
-            for j in range(i+1, exit_i+1):
-                adv = (1 - l[j]/entry)*1e4 if hit > 0 else (h[j]/entry - 1)*1e4
-                if adv >= 75:
-                    net_s = -75 - cost - 1.0
-                    break
-            trades.append((sess[i], net, net_s))
+            def variant(hold, stop):
+                exit_i = min(i + hold + 1, n-1)
+                v = hit * (c[exit_i] / entry - 1) * 1e4 - cost
+                for j in range(i+1, exit_i+1):
+                    adv = (1 - l[j]/entry)*1e4 if hit > 0 else (h[j]/entry - 1)*1e4
+                    if adv >= stop:
+                        return -stop - cost - 1.0
+                return v
+            net = hit * (c[min(i+61, n-1)] / entry - 1) * 1e4 - cost   # primary no-stop
+            net_s = variant(60, 75)     # primary frozen: h60/stop75
+            net_c = variant(90, 100)    # challenger: h90/stop100 (A/B, pre-registered)
+            trades.append((sess[i], net, net_s, net_c))
             i += 61
             continue
         i += 1
-    if not trades: return 0, 0.0, 0, 0.0, 0.0
+    if not trades: return 0, 0.0, 0, 0.0, 0.0, 0.0
     ydays = [x for x in trades if x[0] == last_sess]
     return (len(ydays), sum(x[1] for x in ydays),
-            len(trades), sum(x[1] for x in trades), sum(x[2] for x in trades))
+            len(trades), sum(x[1] for x in trades), sum(x[2] for x in trades),
+            sum(x[3] for x in trades))
 
 
 def main():
@@ -193,9 +197,9 @@ def main():
     print()
     print(f">>> SHADOW SHORT (纸面追踪，勿交易): {'SHORT' if shadow_short else 'inactive'}"
           f"  [below 60dMA={bool(d['close'].iloc[-2] < ma60.iloc[-2])}, 5d-down={mom5 < 0}]")
-    rb_n, rb_pnl, rb_cn, rb_cum, rb_cum_s = roundbreak_shadow(m1_raw)
+    rb_n, rb_pnl, rb_cn, rb_cum, rb_cum_s, rb_cum_c = roundbreak_shadow(m1_raw)
     print(f">>> SHADOW ROUNDBREAK (纸面追踪，勿交易): 昨日 {rb_n} 笔 {rb_pnl:+.1f}bps | "
-          f"自 2026-07-10 累计 {rb_cn} 笔: 无止损 {rb_cum:+.0f}bps / 止损75 {rb_cum_s:+.0f}bps")
+          f"自 2026-07-10 累计 {rb_cn} 笔: 主规格h60s75 {rb_cum_s:+.0f}bps / 挑战者h90s100 {rb_cum_c:+.0f}bps / 无止损 {rb_cum:+.0f}bps")
     print(f">>> SHADOW US-SHORT (纸面追踪，勿交易): "
           f"{'ACTIVE — 明日 08:00→16:59 ET 做空（去杠杆熊假说，n=1，历史上洗盘熊会亏）' if us_bear else 'inactive'}"
           f"  [dd252={dd252:+.1%}, bear-regime={us_bear}]")
