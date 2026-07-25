@@ -28,15 +28,46 @@ jobs:
       - name: log and notify
         env:
           GH_TOKEN: ${{ github.token }}
+          LATE_CRON: ${{ github.event.schedule == '7 22 * * 1-5' }}
         run: |
-          grep -q SESSION_INCOMPLETE_SKIP signal.txt && { echo "session not closed yet, skipping"; exit 0; }
+          git config user.name signal-bot
+          git config user.email signal-bot@users.noreply.github.com
+
+          # feed-lag calibration row, recorded on every run whether a signal is
+          # emitted or not (see realtime_probe in daily_signal.py)
+          mkdir -p calibration
+          [ -f calibration/feed_cal.csv ] || \
+            echo "run_et,session,seen_close,intraday_frontier_utc,prev_close,prev_close_ts" \
+              > calibration/feed_cal.csv
+          grep '^FEEDCAL,' signal.txt | sed 's/^FEEDCAL,//' >> calibration/feed_cal.csv || true
+          sed -i '/^FEEDCAL,/d' signal.txt          # keep the diagnostic out of the email
+
+          if grep -q SESSION_INCOMPLETE_SKIP signal.txt; then
+            echo "session not closed yet"
+            git add calibration
+            git commit -q -m "feed calibration $(date -u +%F)" || true
+            git pull --rebase -q || true
+            git push || true
+            # the early cron legitimately fires pre-close in winter; only the late
+            # one means the day is about to end with no signal. Stay quiet if the
+            # early cron already posted one.
+            if [ "$LATE_CRON" = "true" ] && [ ! -f "signals/$(TZ=America/New_York date +%F).txt" ]; then
+              gh issue create \
+                --title "XAUUSD 信号 $(date -u +%F): 未生成 ⚠️" \
+                --body "$(printf '数据源没有交付今日 session，信号未生成——**保持昨日仓位不变**。\n\n```\n%s\n```\n\n历史病因见 daily_signal.daily_bars 的注释（EODHD 分钟数据每日批量交付，水位线 ~06:50 UTC）。若连续出现，先查 calibration/feed_cal.csv 的 intraday_frontier_utc 列。' "$(cat signal.txt)")" \
+                --assignee "${{ github.repository_owner }}"
+            fi
+            exit 0
+          fi
+
           MAIN=$(grep -oP '(?<=GRIND MOMENTUM \(primary\): )\w+' signal.txt || echo UNKNOWN)
           DATE=$(grep -oP '(?<=session close )\S+' signal.txt || date -u +%F)
           [ -f "signals/${DATE}.txt" ] && { echo "already posted for ${DATE}, skipping"; exit 0; }
           mkdir -p signals && cp signal.txt "signals/${DATE}.txt"
-          git config user.name signal-bot
-          git config user.email signal-bot@users.noreply.github.com
-          git add signals && (git commit -m "signal ${DATE}: ${MAIN}" && git push) || true
+          git add signals calibration
+          git commit -q -m "signal ${DATE}: ${MAIN}" || true
+          git pull --rebase -q || true
+          git push || true
           gh issue create \
             --title "XAUUSD 信号 ${DATE}: ${MAIN}" \
             --body "$(cat signal.txt)" \

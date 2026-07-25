@@ -59,12 +59,37 @@ def daily_bars(m1: pd.DataFrame) -> pd.DataFrame:
     sh.index = sh.index + pd.Timedelta(hours=7)   # 17:00 ET -> midnight
     d = sh.resample("1D").agg({"open": "first", "high": "max",
                                "low": "min", "close": "last"}).dropna()
-    # drop a partially-formed final session (e.g. run after the 18:00 ET reopen:
-    # the new session has only a few minutes of bars and must not count as a day)
+    # Drop a newest session too thin to stand for a day. EODHD delivers the 1m
+    # feed in a daily batch (watermark ~06:50 UTC, measured 2026-07-24), so the
+    # newest session is ALWAYS partial: Tue-Fri hold ~530 bars at that point,
+    # but a Monday session starts at 00:00 ET (Sunday evening is filtered out
+    # above) and holds only ~110-170. A flat <300 floor therefore dropped every
+    # Monday in the sample -- 536/536 since 2016 -- so no Monday signal was ever
+    # emitted and Tuesday ran on Friday's signal (17% of Tuesdays mispositioned).
     counts = sh["close"].resample("1D").count()
-    if counts.reindex(d.index).iloc[-1] < 300:
+    floor = 60 if d.index[-1].dayofweek == 0 else 300
+    if counts.reindex(d.index).iloc[-1] < floor:
         d = d.iloc[:-1]
     return d
+
+
+def realtime_probe(token: str) -> dict:
+    """Daily calibration row for the feed-lag problem.
+
+    EODHD's live feed does not carry metals (verified 2026-07-24: XAUUSD and
+    XAGUSD return NA inside the same batch response where EURUSD/GBPUSD quote
+    normally), but previousClose IS populated and is fresher than /eod. Log it
+    every run so it can be reconciled against the 1m bars once they backfill:
+    if it turns out to be the true 17:00 ET close and lands before ~18:00 ET, it
+    replaces the ~15h-stale watermark price the signal is computed on today.
+    """
+    try:
+        r = requests.get("https://eodhd.com/api/real-time/XAUUSD.FOREX",
+                         params={"api_token": token, "fmt": "json"},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
 
 
 def real_rate_falling() -> bool | None:
@@ -135,6 +160,13 @@ def main():
     d = daily_bars(m1_raw)
     last = d.index[-1]
     now_et = pd.Timestamp.now(tz="America/New_York")
+
+    # calibration row, emitted on every run (including skips) -- see realtime_probe
+    rt = realtime_probe(token)
+    print(f"FEEDCAL,{now_et:%Y-%m-%dT%H:%M%z},{last.date()},{d['close'].iloc[-1]:.2f},"
+          f"{m1_raw.index[-1]:%Y-%m-%dT%H:%MZ},{rt.get('previousClose', 'NA')},"
+          f"{rt.get('timestamp', 'NA')}")
+
     if not args.force and (last.date() != now_et.date() or now_et.hour < 17):
         print("SESSION_INCOMPLETE_SKIP: latest complete session "
               f"{last.date()}, now {now_et:%H:%M} ET — today's session not closed yet")
