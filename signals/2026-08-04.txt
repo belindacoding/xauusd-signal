@@ -1,0 +1,11 @@
+===== XAUUSD DAILY SIGNAL | session close 2026-08-04 17:00 ET (generated 2026-08-04 18:19 ET) =====
+close=4062.20  past-5d=-0.13%  regime=GRIND
+
+>>> GRIND MOMENTUM (primary): FLAT  (yesterday: LONG)
+>>> ACTION: SELL 全部持仓：等到 20:00 ET 市价卖出（或挂限价 昨收+10bps 至 20:00，未成交则 20:00 市价）——晚卖平均多赚 ~4bps
+
+>>> GC-COMPOSITE v1 (reference): pos=+0  [TOM=0 Dip=0 Big=+0]
+
+>>> SHADOW SHORT (纸面追踪，勿交易): SHORT  [below 60dMA=True, 5d-down=True]
+>>> SHADOW ROUNDBREAK (纸面追踪，勿交易): 昨日 2 笔 -40.4bps | 自 2026-07-10 累计 86 笔: 主规格h60s75 -23bps / 挑战者h90s100 +101bps / 无止损 -42bps
+>>> SHADOW US-SHORT (纸面追踪，勿交易): ACTIVE — 明日 08:00→16:59 ET 做空（去杠杆熊假说，n=1，历史上洗盘熊会亏）  [dd252=-25.0%, bear-regime=True]
